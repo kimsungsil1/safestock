@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>재고 추적 서비스</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 30px;
+    }
+    h1 {
+      margin-bottom: 20px;
+    }
+    .input-section {
+      margin-bottom: 20px;
+    }
+    label {
+      margin-right: 10px;
+    }
+    button {
+      margin-left: 10px;
+    }
+    .calendar {
+      display: inline-block;
+      margin-top: 20px;
+      border: 1px solid #ccc;
+      border-collapse: collapse;
+    }
+    .calendar th, .calendar td {
+      width: 40px;
+      height: 40px;
+      text-align: center;
+      vertical-align: middle;
+      border: 1px solid #ccc;
+    }
+    .highlight {
+      background-color: #ffcccc;
+    }
+  </style>
+</head>
+<body>
+  <h1>재고 추적 서비스</h1>
+  <div class="input-section">
+    <label>어제 재고량: 
+      <input type="number" id="yesterdayStock" placeholder="예: 100" />
+    </label>
+    <label>오늘 재고량: 
+      <input type="number" id="todayStock" placeholder="예: 99" />
+    </label>
+    <button onclick="updateStock()">업데이트</button>
+  </div>
+  <div class="input-section">
+    <label>안정재고: 
+      <input type="number" id="safeStock" value="70" />
+    </label>
+    <button onclick="calculateSafeDay()">안정재고 예측</button>
+  </div>
+
+  <!-- 결과 영역 -->
+  <div id="result" style="margin-bottom:20px;"></div>
+
+  <!-- 달력 영역 -->
+  <div id="calendarContainer"></div>
+
+  <script>
+    // 일일 판매량 기록을 저장할 배열 (Local Storage 사용)
+    // [ { date: 'YYYY-MM-DD', sold: number }, ... ]
+    let dailySales = JSON.parse(localStorage.getItem('dailySales') || '[]');
+
+    // 오늘 날짜 문자열 반환 함수 (YYYY-MM-DD 형식)
+    function getTodayString(dateObj = new Date()) {
+      const year = dateObj.getFullYear();
+      const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    // “어제 재고량”과 “오늘 재고량” 차이(판매량)을 기록하기
+    function updateStock() {
+      const yesterday = Number(document.getElementById('yesterdayStock').value);
+      const today = Number(document.getElementById('todayStock').value);
+
+      if (isNaN(yesterday) || isNaN(today)) {
+        alert('어제 재고량과 오늘 재고량을 정확히 입력하세요.');
+        return;
+      }
+      if (yesterday < today) {
+        alert('오늘 재고가 어제 재고보다 많습니다. (입력값 재확인)');
+        return;
+      }
+
+      const sold = yesterday - today; // 일일 판매량
+      const currentDate = getTodayString();
+
+      // 이미 오늘 기록이 있으면 덮어쓰고, 없으면 push
+      const existingIndex = dailySales.findIndex(item => item.date === currentDate);
+      if (existingIndex !== -1) {
+        dailySales[existingIndex].sold = sold;
+      } else {
+        dailySales.push({ date: currentDate, sold });
+      }
+
+      // Local Storage에 저장
+      localStorage.setItem('dailySales', JSON.stringify(dailySales));
+      alert(`판매량(${sold}개)이 업데이트 되었습니다.`);
+    }
+
+    // 최근 N일간 평균 판매량 계산 (기본적으로 최근 7일로 가정)
+    function getAverageSales(days = 7) {
+      if (dailySales.length === 0) return 0;
+
+      // 정렬: 날짜가 최근 순으로 정렬
+      dailySales.sort((a, b) => new Date(b.date) - new Date(a.date));
+      // 최근 N일 데이터만 추출
+      const recentData = dailySales.slice(0, days);
+
+      // 판매량 합계
+      const totalSold = recentData.reduce((sum, item) => sum + item.sold, 0);
+      return totalSold / recentData.length;
+    }
+
+    // 안정재고 미만이 되는 날짜 예측
+    function calculateSafeDay() {
+      const today = Number(document.getElementById('todayStock').value);
+      const safe = Number(document.getElementById('safeStock').value);
+
+      if (isNaN(today) || isNaN(safe)) {
+        alert('오늘 재고량과 안정재고를 입력하세요.');
+        return;
+      }
+
+      const avgSales = getAverageSales(7); // 최근 7일간 평균 판매량
+      if (avgSales <= 0) {
+        document.getElementById('result').innerText = '판매량 데이터가 충분하지 않거나 0입니다.';
+        clearCalendar();
+        return;
+      }
+
+      // 재고가 안정재고(safe) 미만이 되는 데 걸리는 일수
+      const daysToSafe = Math.ceil((today - safe) / avgSales);
+
+      if (daysToSafe <= 0) {
+        document.getElementById('result').innerText = 
+          `현재 재고(${today}개)가 이미 안정재고(${safe}개) 이하입니다.`;
+        clearCalendar();
+        return;
+      }
+
+      // 오늘 기준으로 daysToSafe 일이 지나면 안정재고 미만이 됨
+      const crossDate = new Date();
+      crossDate.setDate(crossDate.getDate() + daysToSafe);
+
+      const crossDateString = getTodayString(crossDate);
+      document.getElementById('result').innerText = 
+        `평균 일일 판매량 ${avgSales.toFixed(2)}개 기준, ${daysToSafe}일 후인 ` +
+        `${crossDateString}에 재고가 안정재고(${safe}개) 미만이 될 것으로 예측합니다.`;
+
+      // 달력 생성 (crossDate 하이라이트)
+      renderCalendar(crossDate);
+    }
+
+    // 달력 지우기
+    function clearCalendar() {
+      document.getElementById('calendarContainer').innerHTML = '';
+    }
+
+    // 달력 렌더링: 기본적으로 이번 달을 기준으로 보이되,
+    // 예상 소진 날짜(crossDate)가 있으면 해당 날짜를 강조
+    function renderCalendar(crossDate) {
+      clearCalendar();
+      const calendarContainer = document.getElementById('calendarContainer');
+
+      // 이번 달 1일
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth(); // 0~11
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0); // 이번달 마지막 날
+
+      const startDay = firstDay.getDay();  // 0(일) ~ 6(토)
+      const totalDays = lastDay.getDate(); // 이번달 일수
+
+      // 테이블 생성
+      const table = document.createElement('table');
+      table.className = 'calendar';
+
+      // 요일 헤더
+      const thead = document.createElement('thead');
+      const daysOfWeek = ['일', '월', '화', '수', '목', '금', '토'];
+      const trHeader = document.createElement('tr');
+      daysOfWeek.forEach(day => {
+        const th = document.createElement('th');
+        th.innerText = day;
+        trHeader.appendChild(th);
+      });
+      thead.appendChild(trHeader);
+      table.appendChild(thead);
+
+      // 날짜 부분
+      const tbody = document.createElement('tbody');
+      let tr = document.createElement('tr');
+
+      // 1일 전 공백 채우기
+      for (let i = 0; i < startDay; i++) {
+        const td = document.createElement('td');
+        td.innerText = '';
+        tr.appendChild(td);
+      }
+
+      // 1일부터 말일까지 채우기
+      for (let dateNum = 1; dateNum <= totalDays; dateNum++) {
+        const td = document.createElement('td');
+        td.innerText = dateNum;
+
+        // 실제 날짜 객체
+        const thisDate = new Date(year, month, dateNum);
+
+        // crossDate와 같은 경우 하이라이트
+        if (
+          thisDate.getFullYear() === crossDate.getFullYear() &&
+          thisDate.getMonth() === crossDate.getMonth() &&
+          thisDate.getDate() === crossDate.getDate()
+        ) {
+          td.classList.add('highlight');
+        }
+
+        tr.appendChild(td);
+
+        // 토요일마다 줄 바꿈
+        if ((startDay + dateNum) % 7 === 0) {
+          tbody.appendChild(tr);
+          tr = document.createElement('tr');
+        }
+      }
+      // 남은 칸 채우기
+      if (tr.childNodes.length > 0) {
+        while (tr.childNodes.length < 7) {
+          const td = document.createElement('td');
+          td.innerText = '';
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+
+      table.appendChild(tbody);
+      calendarContainer.appendChild(table);
+    }
+  </script>
+</body>
+</html>
